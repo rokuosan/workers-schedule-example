@@ -18,6 +18,8 @@ app.get('/', (c) => {
 const handler: ExportedHandler<Env> = {
   fetch: app.fetch,
   scheduled: async (controller, env, ctx) => {
+    if (Math.random() > 0.001) return;
+
     const r = await fetch(env.WEBHOOK_URL, {
       method: 'POST',
       headers: {
