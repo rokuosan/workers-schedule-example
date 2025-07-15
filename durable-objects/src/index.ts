@@ -4,6 +4,7 @@ import { hc } from 'hono/client';
 
 type Env = {
   WEBHOOK_URL: string;
+  BASE_URL: string;
 };
 
 type App = {
@@ -12,6 +13,7 @@ type App = {
 };
 
 const Duration: Record<string, number> = {
+  '10s': 10 * 1000,
   '2m': 2 * 60 * 1000,
   '5m': 5 * 60 * 1000,
   '10m': 10 * 60 * 1000,
@@ -19,7 +21,10 @@ const Duration: Record<string, number> = {
 
 const app = new Hono<App>()
   .post('/alarm', async (c) => {
-    const r = await fetch(c.env.WEBHOOK_URL, {
+    console.log('Called /alarm endpoint', new Date().toISOString());
+    const body = await c.req.json();
+    const url = body['webhook'] || c.env.WEBHOOK_URL;
+    const r = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -30,48 +35,96 @@ const app = new Hono<App>()
     });
     return c.json(r.json());
   })
+  .get('/scheduler/:interval', async (c) => {
+    const interval = c.req.param('interval') || '2m';
+
+    const id = c.env.SCHEDULER?.idFromName(interval);
+    const stub = c.env.SCHEDULER.get(id);
+    const hasAlarm = await stub.hasAlarm();
+    const scheduledTime = await stub.scheduledTime();
+    return c.json({ hasAlarm, scheduledTime });
+  })
   .post('/scheduler/:interval', async (c) => {
     const interval = c.req.param('interval') || '2m';
 
     const id = c.env.SCHEDULER?.idFromName(interval);
     const stub = c.env.SCHEDULER.get(id);
-    await stub.initSchedule(Duration[interval]);
-    return c.text('Scheduler is running!');
+    const duration = Duration[interval];
+    if (!duration) {
+      return c.json({ error: 'Invalid interval' }, 400);
+    }
+
+    const initialized = await stub.initSchedule(duration);
+    if (!initialized) {
+      return c.json({ error: 'Scheduler already initialized' }, 400);
+    } else {
+      return c.json({
+        message: `Scheduler initialized with interval ${interval}`,
+      });
+    }
   });
 
-const client = hc<typeof app>('/');
-
 export class Scheduler extends DurableObject<Env> {
-  private storage: DurableObjectStorage;
-  private duration: number = 0;
-
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.storage = ctx.storage;
   }
 
-  async initSchedule(duration: number): Promise<void> {
-    this.duration = duration;
-    const alarm = await this.storage.getAlarm({ allowConcurrency: false });
-    if (!alarm) {
-      this.storage.setAlarm(Date.now() + duration);
-    }
+  async initSchedule(duration: number): Promise<boolean> {
+    await this.ctx.storage.put('duration', duration);
+    const alarm = await this.ctx.storage.getAlarm();
+    console.log(
+      `Current alarm: ${alarm ? new Date(alarm).toISOString() : 'none'}`,
+    );
+    await this.ctx.storage.setAlarm(Date.now() + duration);
+    console.log(
+      `Scheduler initialized with duration ${duration}ms, next alarm set for ${new Date(Date.now() + duration).toISOString()}`,
+    );
+    return true;
+  }
+
+  async hasAlarm(): Promise<boolean> {
+    const alarm = await this.ctx.storage.getAlarm();
+    return !!alarm && alarm > Date.now();
+  }
+  async scheduledTime(): Promise<number | null> {
+    const alarm = await this.ctx.storage.getAlarm();
+    if (!alarm || alarm <= Date.now()) return null;
+    return alarm;
   }
 
   async alarm(alarmInfo?: AlarmInvocationInfo): Promise<void> {
+    const duration: number = (await this.ctx.storage.get('duration')) || 0;
+    console.log(
+      `Alarm invoked`,
+      'now',
+      new Date().toISOString(),
+      'alarm info',
+      JSON.stringify(alarmInfo),
+      'duration',
+      duration,
+    );
     if (alarmInfo?.isRetry) return;
-    if (this.duration <= 0) return;
+    if (duration <= 0) return;
 
-    console.log(`Alarm triggered at ${new Date().toISOString()}`);
-    const alarm = await this.storage.getAlarm({ allowConcurrency: false });
+    const alarm = await this.ctx.storage.getAlarm();
     console.log(
       `Current alarm: ${alarm ? new Date(alarm).toISOString() : 'none'}`,
     );
 
-    const r = await client.alarm.$post();
+    const r = await app.request('/alarm', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        webhook: this.env.WEBHOOK_URL,
+      }),
+    });
     console.log(`Webhook response: ${r.status} ${r.statusText}`);
 
-    this.storage.setAlarm(Date.now() + this.duration); // Set next alarm for the configured duration
+    const next = Date.now() + duration;
+    console.log(`Setting next alarm for ${new Date(next).toISOString()}`);
+    await this.ctx.storage.setAlarm(next); // Set next alarm for the configured duration
   }
 }
 
