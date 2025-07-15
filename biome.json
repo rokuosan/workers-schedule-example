@@ -17,10 +17,16 @@
 		"rules": {
 			"recommended": true
 		},
-		"includes": ["!**/node_modules/**", "!**/dist/**", "!**/build/**", "!*.d.ts"]
+		"includes": [
+			"!**/node_modules/**",
+			"!**/dist/**",
+			"!**/build/**",
+			"!*.d.ts"
+		]
 	},
 	"javascript": {
 		"formatter": {
+			"enabled": true,
 			"quoteStyle": "single",
 			"arrowParentheses": "always",
 			"bracketSameLine": false,
@@ -28,7 +34,8 @@
 			"jsxQuoteStyle": "double",
 			"quoteProperties": "asNeeded",
 			"semicolons": "always",
-			"trailingCommas": "all"
+			"trailingCommas": "all",
+			"indentStyle": "space"
 		}
 	},
 	"assist": {

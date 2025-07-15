@@ -2,12 +2,12 @@ import { Hono } from 'hono';
 
 type Env = {
   WEBHOOK_URL: string;
-}
+};
 
 type App = {
   Env: Env;
   Bindings: CloudflareBindings;
-}
+};
 
 const app = new Hono<App>();
 
@@ -26,9 +26,9 @@ const handler: ExportedHandler<Env> = {
       body: JSON.stringify({
         content: `Scheduled event triggered!: \`${controller.cron}\``,
       }),
-    })
+    });
     console.log(`Webhook response: ${r.status} ${r.statusText}`);
-  }
-}
+  },
+};
 
 export default handler;
