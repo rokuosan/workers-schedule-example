@@ -24,7 +24,7 @@ const handler: ExportedHandler<Env> = {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        content: `Scheduled event triggered!: ${controller.cron}`,
+        content: `Scheduled event triggered!: \`${controller.cron}\``,
       }),
     })
     console.log(`Webhook response: ${r.status} ${r.statusText}`);
