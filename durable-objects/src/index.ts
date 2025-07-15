@@ -62,6 +62,19 @@ const app = new Hono<App>()
         message: `Scheduler initialized with interval ${interval}`,
       });
     }
+  })
+  .delete('/scheduler/:interval', async (c) => {
+    const interval = c.req.param('interval') || '2m';
+
+    const id = c.env.SCHEDULER?.idFromName(interval);
+    const stub = c.env.SCHEDULER.get(id);
+    const hasAlarm = await stub.hasAlarm();
+    if (!hasAlarm) {
+      return c.json({ error: 'No active alarm to cancel' }, 400);
+    } else {
+      await stub.deleteAlarm();
+      return c.json({ message: `Alarm for interval ${interval} canceled` });
+    }
   });
 
 export class Scheduler extends DurableObject<Env> {
@@ -90,6 +103,10 @@ export class Scheduler extends DurableObject<Env> {
     const alarm = await this.ctx.storage.getAlarm();
     if (!alarm || alarm <= Date.now()) return null;
     return alarm;
+  }
+  async deleteAlarm(): Promise<void> {
+    console.log(`Deleting alarm`);
+    await this.ctx.storage.deleteAlarm();
   }
 
   async alarm(alarmInfo?: AlarmInvocationInfo): Promise<void> {
