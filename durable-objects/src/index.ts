@@ -1,8 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Hono } from 'hono';
-import { hc } from 'hono/client';
 
-type Env = {
+export type Env = {
   WEBHOOK_URL: string;
   BASE_URL: string;
 };
@@ -12,137 +11,124 @@ type App = {
   Bindings: CloudflareBindings;
 };
 
-const Duration: Record<string, number> = {
-  '10s': 10 * 1000,
-  '2m': 2 * 60 * 1000,
-  '5m': 5 * 60 * 1000,
-  '10m': 10 * 60 * 1000,
-};
+const app = new Hono<App>();
 
-const app = new Hono<App>()
-  .post('/alarm', async (c) => {
-    console.log('Called /alarm endpoint', new Date().toISOString());
-    const body = await c.req.json();
-    const url = body['webhook'] || c.env.WEBHOOK_URL;
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        content: `Alarm triggered at ${new Date().toISOString()}`,
-      }),
-    });
-    return c.json(r.json());
-  })
-  .get('/scheduler/:interval', async (c) => {
-    const interval = c.req.param('interval') || '2m';
-
-    const id = c.env.SCHEDULER?.idFromName(interval);
-    const stub = c.env.SCHEDULER.get(id);
-    const hasAlarm = await stub.hasAlarm();
-    const scheduledTime = await stub.scheduledTime();
-    return c.json({ hasAlarm, scheduledTime });
-  })
-  .post('/scheduler/:interval', async (c) => {
-    const interval = c.req.param('interval') || '2m';
-
-    const id = c.env.SCHEDULER?.idFromName(interval);
-    const stub = c.env.SCHEDULER.get(id);
-    const duration = Duration[interval];
-    if (!duration) {
-      return c.json({ error: 'Invalid interval' }, 400);
-    }
-
-    const initialized = await stub.initSchedule(duration);
-    if (!initialized) {
-      return c.json({ error: 'Scheduler already initialized' }, 400);
-    } else {
-      return c.json({
-        message: `Scheduler initialized with interval ${interval}`,
-      });
-    }
-  })
-  .delete('/scheduler/:interval', async (c) => {
-    const interval = c.req.param('interval') || '2m';
-
-    const id = c.env.SCHEDULER?.idFromName(interval);
-    const stub = c.env.SCHEDULER.get(id);
-    const hasAlarm = await stub.hasAlarm();
-    if (!hasAlarm) {
-      return c.json({ error: 'No active alarm to cancel' }, 400);
-    } else {
-      await stub.deleteAlarm();
-      return c.json({ message: `Alarm for interval ${interval} canceled` });
-    }
+app.get('/scheduler/:name', async (c) => {
+  const name = c.req.param('name') || 'default';
+  const id = c.env.SCHEDULER?.idFromName(name);
+  if (!id) {
+    return c.json({ error: 'Scheduler not found' }, 404);
+  }
+  const stub = c.env.SCHEDULER.get(id);
+  const params = await stub.getParams();
+  return c.json({
+    name,
+    interval: params.interval,
+    message: params.message,
+    nextScheduledTime: await stub.nextScheduledTime(),
   });
+});
+
+app.post('/scheduler/:name', async (c) => {
+  const body = await c.req.json();
+  const name = c.req.param('name') || 'default';
+  const message = body.message || 'Hello, World!';
+  const intervalSec = parseInt(body.interval) || 10;
+
+  const id = c.env.SCHEDULER?.idFromName(name);
+  const stub = c.env.SCHEDULER.get(id);
+  const interval = intervalSec * 1000;
+
+  const next = await stub.schedule(interval, message);
+  if (next) {
+    return c.json({
+      message: `Scheduler for ${name} initialized with interval ${intervalSec}s`,
+      nextAlarm: new Date(next).toISOString(),
+    });
+  }
+  return c.json({ error: 'Failed to initialize scheduler' }, 500);
+});
+
+app.delete('/scheduler/:name', async (c) => {
+  const name = c.req.param('name') || 'default';
+  const id = c.env.SCHEDULER?.idFromName(name);
+  if (!id) {
+    return c.json({ error: 'Scheduler not found' }, 404);
+  }
+  const stub = c.env.SCHEDULER.get(id);
+  await stub.delete();
+  return c.json({ message: `Scheduler for ${name} cleared` });
+});
+
+export type SchedulerParams = {
+  interval: number;
+  message: string;
+};
 
 export class Scheduler extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
   }
 
-  async initSchedule(duration: number): Promise<boolean> {
-    await this.ctx.storage.put('duration', duration);
+  async schedule(interval: number, message: string): Promise<number> {
+    await this.ctx.storage.put('interval', interval);
+    await this.ctx.storage.put('message', message);
+
     const alarm = await this.ctx.storage.getAlarm();
+    if (alarm && alarm > Date.now()) {
+      console.log(`Alarm already set for ${new Date(alarm).toISOString()}`);
+      return alarm;
+    }
+
+    const next = Date.now() + interval;
+    await this.ctx.storage.setAlarm(next);
     console.log(
-      `Current alarm: ${alarm ? new Date(alarm).toISOString() : 'none'}`,
+      `Scheduler initialized with interval ${interval}ms, next alarm set for ${new Date(next).toISOString()}`,
     );
-    await this.ctx.storage.setAlarm(Date.now() + duration);
-    console.log(
-      `Scheduler initialized with duration ${duration}ms, next alarm set for ${new Date(Date.now() + duration).toISOString()}`,
-    );
-    return true;
+    return next;
   }
 
-  async hasAlarm(): Promise<boolean> {
-    const alarm = await this.ctx.storage.getAlarm();
-    return !!alarm && alarm > Date.now();
-  }
-  async scheduledTime(): Promise<number | null> {
-    const alarm = await this.ctx.storage.getAlarm();
-    if (!alarm || alarm <= Date.now()) return null;
-    return alarm;
-  }
-  async deleteAlarm(): Promise<void> {
-    console.log(`Deleting alarm`);
+  async delete(): Promise<void> {
     await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    console.log('Scheduler cleared');
+  }
+
+  async nextScheduledTime(): Promise<Date | null> {
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm && alarm > Date.now()) {
+      return new Date(alarm);
+    }
+    return null;
+  }
+
+  async getParams(): Promise<SchedulerParams> {
+    const interval: number = (await this.ctx.storage.get('interval')) || 0;
+    const message: string = (await this.ctx.storage.get('message')) || '';
+    return { interval, message };
   }
 
   async alarm(alarmInfo?: AlarmInvocationInfo): Promise<void> {
-    const duration: number = (await this.ctx.storage.get('duration')) || 0;
-    console.log(
-      `Alarm invoked`,
-      'now',
-      new Date().toISOString(),
-      'alarm info',
-      JSON.stringify(alarmInfo),
-      'duration',
-      duration,
-    );
+    const interval: number = (await this.ctx.storage.get('interval')) || 0;
+    const message: string = (await this.ctx.storage.get('message')) || '';
+
+    // リトライでたくさん呼ばれると困るのでリトライは無視
     if (alarmInfo?.isRetry) return;
-    if (duration <= 0) return;
+    if (interval <= 0) return;
 
-    const alarm = await this.ctx.storage.getAlarm();
-    console.log(
-      `Current alarm: ${alarm ? new Date(alarm).toISOString() : 'none'}`,
-    );
-
-    const r = await app.request('/alarm', {
+    // Send the message to the webhook
+    const r = await fetch(this.env.WEBHOOK_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        webhook: this.env.WEBHOOK_URL,
-      }),
+      body: JSON.stringify({ content: message }),
     });
     console.log(`Webhook response: ${r.status} ${r.statusText}`);
 
-    const next = Date.now() + duration;
-    console.log(`Setting next alarm for ${new Date(next).toISOString()}`);
-    await this.ctx.storage.setAlarm(next); // Set next alarm for the configured duration
+    // Reschedule the alarm
+    await this.schedule(interval, message);
   }
 }
 
-export default app;
+export default app as ExportedHandler;
