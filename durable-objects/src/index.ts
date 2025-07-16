@@ -122,7 +122,9 @@ export class Scheduler extends DurableObject<Env> {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ content: message }),
+      body: JSON.stringify({
+        content: message + ` (scheduled at ${new Date().toISOString()})`,
+      }),
     });
     console.log(`Webhook response: ${r.status} ${r.statusText}`);
 
