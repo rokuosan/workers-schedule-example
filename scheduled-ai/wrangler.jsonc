@@ -2,10 +2,33 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "scheduled-ai",
   "main": "src/index.ts",
-  "compatibility_date": "2025-07-16"
-  // "compatibility_flags": [
-  //   "nodejs_compat"
-  // ],
+  "compatibility_date": "2025-07-16",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Scheduler"
+      ],
+    }
+  ],
+  "durable_objects": {
+		"bindings": [
+			{
+				"class_name": "Scheduler",
+				"name": "SCHEDULER"
+			}
+		]
+	},
+  "ai": {
+    "binding": "AI"
+  },
   // "vars": {
   //   "MY_VAR": "my-variable"
   // },
@@ -28,11 +51,4 @@
   //     "database_id": ""
   //   }
   // ],
-  // "ai": {
-  //   "binding": "AI"
-  // },
-  // "observability": {
-  //   "enabled": true,
-  //   "head_sampling_rate": 1
-  // }
 }
