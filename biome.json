@@ -6,7 +6,19 @@
 		"useIgnoreFile": false
 	},
 	"files": {
-		"ignoreUnknown": false
+		"ignoreUnknown": true,
+		"experimentalScannerIgnores": [
+			"**/node_modules/**",
+			"**/dist/**",
+			"**/build/**",
+			"**/coverage/**",
+			"**/.git/**",
+			"**/.vscode/**",
+			"**/.idea/**",
+			"**/.DS_Store",
+			"**/yarn.lock",
+			"**/package-lock.json"
+		]
 	},
 	"formatter": {
 		"enabled": true,
@@ -16,13 +28,7 @@
 		"enabled": true,
 		"rules": {
 			"recommended": true
-		},
-		"includes": [
-			"!**/node_modules/**",
-			"!**/dist/**",
-			"!**/build/**",
-			"!*.d.ts"
-		]
+		}
 	},
 	"javascript": {
 		"formatter": {
